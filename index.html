@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recordatorios & Tareas</title>
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/906/906334.png">
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #f3f4f6; margin: 0; padding: 1.25rem; color: #1f2937; }
+    .app-card { max-width: 480px; margin: 0 auto; background: #ffffff; padding: 1.5rem; border-radius: 16px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+    h1 { margin: 0 0 1.25rem 0; color: #4f46e5; font-size: 1.5rem; text-align: center; font-weight: 700; }
+    .btn-install { display: none; width: 100%; background: #10b981; color: white; border: none; padding: 0.85rem; border-radius: 10px; font-weight: 600; margin-bottom: 1.25rem; cursor: pointer; font-size: 0.95rem; }
+    .btn-install:hover { background: #059669; }
+    form { display: flex; flex-direction: column; gap: 0.85rem; margin-bottom: 1.5rem; }
+    .input-group { display: flex; flex-direction: column; gap: 0.35rem; }
+    label { font-size: 0.85rem; font-weight: 600; color: #4b5563; }
+    input { padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
+    input:focus { border-color: #4f46e5; }
+    .btn-submit { background: #4f46e5; color: white; border: none; padding: 0.85rem; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem; margin-top: 0.5rem; }
+    .btn-submit:hover { background: #4338ca; }
+    .section-title { font-size: 1.1rem; font-weight: 600; color: #374151; margin-bottom: 0.75rem; }
+    ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+    li { background: #f9fafb; border: 1px solid #e5e7eb; padding: 0.85rem; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .task-details { display: flex; flex-direction: column; gap: 0.25rem; }
+    .task-title { font-weight: 600; font-size: 1rem; color: #111827; }
+    .task-date { font-size: 0.8rem; color: #6b7280; }
+    .btn-delete { background: #ef4444; color: white; border: none; padding: 0.45rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500; }
+    .btn-delete:hover { background: #dc2626; }
+    .empty-state { text-align: center; color: #9ca3af; padding: 1rem 0; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="app-card">
+    <button id="btnInstall" class="btn-install">📲 Instalar App en Dispositivo</button>
+    <h1>⏰ Tareas y Recordatorios</h1>
+
+    <form id="taskForm">
+      <div class="input-group">
+        <label for="title">Descripción</label>
+        <input type="text" id="title" placeholder="Ej. Tomar medicamento, Reunión..." required>
+      </div>
+      <div class="input-group">
+        <label for="datetime">Fecha y Hora de la Alarma</label>
+        <input type="datetime-local" id="datetime" required>
+      </div>
+      <button type="submit" class="btn-submit">Guardar Recordatorio</button>
+    </form>
+
+    <div class="section-title">Pendientes</div>
+    <ul id="taskList"></ul>
+  </div>
+
+  <script>
+    // Registro automático de Service Worker vía Blob para mantenerlo todo en un solo archivo
+    if ('serviceWorker' in navigator) {
+      const swCode = `
+        self.addEventListener('install', (e) => self.skipWaiting());
+        self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
+        self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
+      `;
+      const blob = new Blob([swCode], { type: 'text/javascript' });
+      const swUrl = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(swUrl)
+        .then(() => console.log('Service Worker Dinámico Registrado'))
+        .catch((err) => console.error('Error SW:', err));
+    }
+
+    // Botón de Instalación PWA (Generador de Manifiesto Dinámico)
+    let deferredPrompt;
+    const btnInstall = document.getElementById('btnInstall');
+
+    const manifestData = {
+      name: "Recordatorios y Alarmas",
+      short_name: "Recordatorios",
+      start_url: window.location.href,
+      display: "standalone",
+      background_color: "#ffffff",
+      theme_color: "#4f46e5",
+      orientation: "portrait",
+      icons: [{
+        src: "https://cdn-icons-png.flaticon.com/512/906/906334.png",
+        sizes: "512x512",
+        type: "image/png"
+      }]
+    };
+    const manifestBlob = new Blob([JSON.stringify(manifestData)], { type: 'application/json' });
+    const manifestLink = document.createElement('link');
+    manifestLink.rel = 'manifest';
+    manifestLink.href = URL.createObjectURL(manifestBlob);
+    document.head.appendChild(manifestLink);
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      btnInstall.style.display = 'block';
+    });
+
+    btnInstall.addEventListener('click', async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+          btnInstall.style.display = 'none';
+        }
+        deferredPrompt = null;
+      }
+    });
+
+    // Permiso de Notificaciones
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    // Lógica de Tareas y Alertas
+    const taskForm = document.getElementById('taskForm');
+    const taskList = document.getElementById('taskList');
+    const activeTimeouts = new Map();
+
+    let tasks = JSON.parse(localStorage.getItem('app_tasks_db')) || [];
+
+    function saveTasks() {
+      localStorage.setItem('app_tasks_db', JSON.stringify(tasks));
+      renderTasks();
+    }
+
+    function scheduleAlarm(task) {
+      if (activeTimeouts.has(task.id)) {
+        clearTimeout(activeTimeouts.get(task.id));
+        activeTimeouts.delete(task.id);
+      }
+
+      const now = Date.now();
+      const taskTime = new Date(task.datetime).getTime();
+      const delay = taskTime - now;
+
+      if (delay > 0) {
+        const timerId = setTimeout(() => {
+          triggerNotification(task);
+        }, delay);
+        activeTimeouts.set(task.id, timerId);
+      }
+    }
+
+    function triggerNotification(task) {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('⏰ Recordatorio', {
+          body: task.title,
+          icon: 'https://cdn-icons-png.flaticon.com/512/906/906334.png',
+          requireInteraction: true
+        });
+      } else {
+        alert(`⏰ RECORDATORIO:\n${task.title}`);
+      }
+    }
+
+    function renderTasks() {
+      taskList.innerHTML = '';
+
+      if (tasks.length === 0) {
+        taskList.innerHTML = '<div class="empty-state">No tienes tareas pendientes</div>';
+        return;
+      }
+
+      tasks.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+
+      tasks.forEach((task) => {
+        const li = document.createElement('li');
+        const dateFormatted = new Date(task.datetime).toLocaleString([], {
+          dateStyle: 'medium',
+          timeStyle: 'short'
+        });
+
+        li.innerHTML = `
+          <div class="task-details">
+            <span class="task-title">${escapeHtml(task.title)}</span>
+            <span class="task-date">📅 ${dateFormatted}</span>
+          </div>
+          <button class="btn-delete" onclick="deleteTask('${task.id}')">Eliminar</button>
+        `;
+        taskList.appendChild(li);
+      });
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/[&<>"']/g, (m) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+      }[m]));
+    }
+
+    taskForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const titleInput = document.getElementById('title');
+      const datetimeInput = document.getElementById('datetime');
+
+      const newTask = {
+        id: Date.now().toString(),
+        title: titleInput.value.trim(),
+        datetime: datetimeInput.value
+      };
+
+      tasks.push(newTask);
+      scheduleAlarm(newTask);
+      saveTasks();
+
+      titleInput.value = '';
+      datetimeInput.value = '';
+    });
+
+    window.deleteTask = function (id) {
+      if (activeTimeouts.has(id)) {
+        clearTimeout(activeTimeouts.get(id));
+        activeTimeouts.delete(id);
+      }
+      tasks = tasks.filter((task) => task.id !== id);
+      saveTasks();
+    };
+
+    // Programar alarmas al iniciar
+    tasks.forEach(scheduleAlarm);
+    renderTasks();
+  </script>
+</body>
+</html>
